@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="E-Studio">
+<meta name="theme-color" content="#0b0f14">
+<meta name="description" content="E-Studio: a pocket recording studio with Auto-Tune and Chopped &amp; Screwed.">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>E-Studio</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="logo-tile" aria-hidden="true">
+    <svg viewBox="164 135 945 1040"><path d="M188 159H561V253H285V505H188Z" fill="#F06617"/><path d="M383 354H924V498H562V600H808V790H562V879H924V1006H383Z" fill="#184D72"/><path d="M495 641H535V684H868V641H908V760H868V722H535V760H495Z" fill="#F06617"/><path d="M993 829H1085V1151H747V1067H993Z" fill="#F06617"/></svg>
+  </span>
+  <div class="titles">
+    <div class="app-name">E-Studio</div>
+    <button id="projName" class="proj-name" aria-label="Rename project">Untitled</button>
+  </div>
+  <button id="bpmBtn" class="pill" aria-label="Tempo">90 BPM</button>
+  <button id="menuBtn" class="icon-btn" aria-label="Menu"></button>
+</header>
+
+<div class="transport">
+  <button id="btnHome" class="t-btn" aria-label="Back to start"></button>
+  <button id="btnPlay" class="t-btn play" aria-label="Play"></button>
+  <button id="btnRec" class="t-btn rec" aria-label="Record"></button>
+  <div class="clock"><div id="clockTime">0:00.0</div><div id="clockBar">bar 1.1</div></div>
+  <button id="btnMetro" class="t-btn sm toggle" aria-label="Metronome"></button>
+  <button id="btnLoop" class="t-btn sm toggle" aria-label="Loop"></button>
+</div>
+
+<main id="main">
+  <section id="tab-studio" class="tab"></section>
+  <section id="tab-beat" class="tab"></section>
+  <section id="tab-keys" class="tab"></section>
+  <section id="tab-tune" class="tab"></section>
+  <section id="tab-screw" class="tab"></section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="studio"><i data-icon="studio"></i><span>Studio</span></button>
+  <button data-tab="beat"><i data-icon="beat"></i><span>Beat</span></button>
+  <button data-tab="keys"><i data-icon="keys"></i><span>Keys</span></button>
+  <button data-tab="tune"><i data-icon="tune"></i><span>Auto-Tune</span></button>
+  <button data-tab="screw"><i data-icon="screw"></i><span>Screw</span></button>
+</nav>
+
+<div id="sheetWrap" class="sheet-wrap" hidden>
+  <div class="sheet-backdrop"></div>
+  <div class="sheet" role="dialog" aria-modal="true"><div class="sheet-grip"></div><div id="sheetBody"></div></div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
