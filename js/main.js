@@ -1,6 +1,7 @@
 import { Engine, bufferOf } from './audio/engine.js';
 import { Synth, SYNTH_PRESETS } from './audio/synth.js';
-import { Recorder } from './audio/recorder.js';
+import { Recorder, countDropouts } from './audio/recorder.js';
+import { startNative, stopNative } from './audio/native.js';
 import { LivePlayer } from './audio/liveplayer.js';
 import { VOICES, playDrum, emptyPattern, PRESETS as BEATS } from './audio/drums.js';
 import { NOTE_NAMES, SCALES, correctionCurve, detectKey, mixToMono, hzToMidi } from './dsp/autotune.js';
@@ -11,7 +12,10 @@ import { ICON } from './icons.js';
 
 // ---------------------------------------------------------------------------
 // setup
+export const APP_VERSION = 2;
 const $ = (q, el = document) => el.querySelector(q);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
 const engine = new Engine();
 const ctx = engine.ctx;
 const synth = new Synth(ctx, engine.master);
@@ -25,7 +29,7 @@ let project = null;
 let tab = 'studio';
 let rec = null;
 let preview = null;
-const ui = { tuneTrackId: null, screwSource: 'mix', screwResult: null, busy: false, keysOctave: 3, perfRec: false };
+const ui = { tuneTrackId: null, screwSource: 'mix', screwResult: null, busy: false, keysOctave: 3, perfRec: false, lastTake: null };
 const settings = loadSettings();
 
 function loadSettings() {
@@ -455,7 +459,7 @@ async function startRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('This browser cannot record. Open E-Studio in Safari.'); return; }
     setSession('play-and-record');
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      stream = await navigator.mediaDevices.getUserMedia(MIC);
     } catch {
       setSession('playback');
       toast('Microphone blocked. Allow it in Settings › Safari › Microphone.');
@@ -468,10 +472,42 @@ async function startRecording() {
     if (tab !== 'keys') { tab = 'keys'; }
   }
   await recorder.start(input);
+  const native = stream ? startNative(stream, ctx) : null;
   const from = engine.position();
   engine.play(from, { record: true, countIn: p.countIn ? engine.barSec : 0 });
-  rec = { from, t0: engine.t0, stream, input, source: p.recSource };
+  rec = { from, t0: engine.t0, stream, input, source: p.recSource, native };
   render();
+}
+
+function micSettings(stream) {
+  try { return stream.getAudioTracks()[0].getSettings() || {}; } catch { return {}; }
+}
+
+// Pick the cleanest copy of a mic take and the audio-clock time of its first sample.
+// Prefers the phone's own recorder, lined up against the Web Audio copy.
+async function bestTake(data, nat, settings) {
+  const sr = ctx.sampleRate;
+  const info = {
+    when: new Date().toLocaleTimeString(), appRate: sr, micRate: settings.sampleRate || null,
+    echoCancellation: settings.echoCancellation, webAudioDropouts: countDropouts(data.l) + data.gaps,
+    method: 'Web Audio', confidence: null,
+  };
+  if (nat && nat.buf) {
+    const x = nat.buf.getChannelData(0);
+    let res = null;
+    const expect = nat.startCtx != null ? Math.round((nat.startCtx - data.startTime) * sr) : null;
+    try { res = await runDsp('align', { ref: data.l, x, sr, expect }); } catch (e) { console.warn('align failed', e); }
+    info.confidence = res ? Math.round(res.confidence * 100) : 0;
+    if (res && res.confidence >= 0.3) {
+      info.method = 'iPhone recorder, synced to the beat';
+      return { l: x, startTime: data.startTime + res.lag / sr, info };
+    }
+    if (nat.startCtx != null) {
+      info.method = 'iPhone recorder, timing estimated';
+      return { l: x, startTime: nat.startCtx, info };
+    }
+  }
+  return { l: data.l, r: data.r, startTime: data.startTime, info };
 }
 
 async function stopRecording() {
@@ -480,11 +516,19 @@ async function stopRecording() {
   rec = null;
   engine.stop();
   const data = await recorder.stop();
+  const nat = await stopNative(r.native, decode);
+  const settingsNow = r.stream ? micSettings(r.stream) : {};
   if (r.stream) { r.stream.getTracks().forEach((t) => t.stop()); try { r.input.disconnect(); } catch { /* fine */ } }
   setSession('playback');
   const sr = ctx.sampleRate;
-  const drop = Math.round((r.t0 + (r.source === 'mic' ? latencySec() : 0) - data.startTime) * sr);
-  let l = data.l, rr = data.r;
+  let take = { l: data.l, r: data.r, startTime: data.startTime };
+  if (r.source === 'mic') {
+    toast('Cleaning up the take…');
+    take = await bestTake(data, nat, settingsNow);
+    ui.lastTake = take.info;
+  }
+  const drop = Math.round((r.t0 + (r.source === 'mic' ? latencySec() : 0) - take.startTime) * sr);
+  let l = take.l, rr = take.r || take.l;
   if (drop > 0) { l = l.subarray(drop); rr = rr.subarray(drop); }
   if (l.length < sr * 0.25) { engine.pos = r.from; toast('Take too short, nothing saved'); render(); return; }
   const stereo = r.source !== 'mic';
@@ -946,9 +990,9 @@ function openMenu() {
     h('button', { class: 'mi', onclick: exportMix }, 'Export mix as WAV', h('small', {}, 'Share it, AirDrop it or save it to Files')),
     h('button', { class: 'mi', onclick: openProjects }, 'Projects', h('small', {}, 'Open or delete saved songs')),
     h('button', { class: 'mi', onclick: newProject }, 'New project'),
-    h('button', { class: 'mi', onclick: openSettings }, 'Recording timing', h('small', {}, 'Fix takes that land late')),
+    h('button', { class: 'mi', onclick: openSettings }, 'Recording and mic test', h('small', {}, 'Check the mic, see how the last take was recorded, fix late takes')),
     h('button', { class: 'mi', onclick: openInstall }, 'Install on iPhone'),
-    h('div', { class: 'about' }, logoTile(), h('div', {}, h('b', { style: 'color:var(--text)' }, 'E-Studio'), h('br'), 'by E-Estimating LLC. Everything stays on this phone.')));
+    h('div', { class: 'about' }, logoTile(), h('div', {}, h('b', { style: 'color:var(--text)' }, 'E-Studio'), h('br'), `by E-Estimating LLC · version ${APP_VERSION}. Everything stays on this phone.`)));
 }
 
 async function openProjects() {
@@ -1003,10 +1047,88 @@ function openTempo() {
     h('p', { class: 'hint', style: 'margin-top:10px' }, 'Recorded takes keep their timing if you change the tempo later.'));
 }
 
+function takeReport(info) {
+  if (!info) return null;
+  const rate = (r) => (r ? `${r.toLocaleString()} Hz` : 'unknown');
+  return h('div', { class: 'card', style: 'margin-bottom:12px;gap:6px' },
+    h('div', { class: 'card-title' }, `Last take (${info.when})`),
+    h('div', {}, 'Recorded with: ', h('b', {}, info.method)),
+    h('div', { class: 'hint' }, `Mic ${rate(info.micRate)} · app ${rate(info.appRate)}${info.micRate && info.micRate !== info.appRate ? ' (different rates)' : ''}`),
+    h('div', { class: 'hint' }, `Web Audio dropouts: ${info.webAudioDropouts}${info.confidence != null ? ` · sync match ${info.confidence}%` : ''} · echo cancel ${info.echoCancellation === undefined ? 'unknown' : info.echoCancellation ? 'on' : 'off'}`));
+}
+
+function playOnce(buf) {
+  stopPreview();
+  if (!buf) return;
+  engine.stop();
+  live.pause();
+  ctx.resume();
+  const s = ctx.createBufferSource();
+  s.buffer = buf;
+  s.connect(previewOut);
+  s.start();
+  s.onended = () => { if (preview && preview.src === s) preview = null; };
+  preview = { src: s, tag: 'test' };
+}
+
+// Records 4 seconds both ways (the phone's recorder and Web Audio) so you can hear
+// which one is clean, with or without the beat playing through the speaker.
+async function micTest(withBeat) {
+  const status = h('div', { class: 'status busy' }, 'Getting the mic…');
+  const result = h('div', { class: 'stack', style: 'margin-top:12px' });
+  openSheet('Mic test',
+    h('p', { class: 'hint', style: 'margin-bottom:10px' }, withBeat
+      ? 'Sing or talk for 4 seconds while the beat plays through the speaker.'
+      : 'Sing or talk for 4 seconds. Nothing plays, so this tests the mic alone.'),
+    status, result);
+  if (rec) { status.textContent = 'Stop recording first.'; status.classList.remove('busy'); return; }
+  engine.stop();
+  live.pause();
+  stopPreview();
+  await ctx.resume();
+  setSession('play-and-record');
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia(MIC); } catch {
+    setSession('playback');
+    status.classList.remove('busy');
+    status.textContent = 'Microphone blocked. Allow it in Settings › Safari › Microphone.';
+    return;
+  }
+  const input = ctx.createMediaStreamSource(stream);
+  await recorder.start(input);
+  const nat = startNative(stream, ctx);
+  if (withBeat) engine.play(0);
+  for (let s = 4; s > 0; s--) { status.textContent = `Recording… ${s}`; await wait(1000); }
+  if (withBeat) engine.stop();
+  const data = await recorder.stop();
+  const n = await stopNative(nat, decode);
+  const st = micSettings(stream);
+  stream.getTracks().forEach((t) => t.stop());
+  try { input.disconnect(); } catch { /* fine */ }
+  setSession('playback');
+  status.classList.remove('busy');
+  status.textContent = 'Done. Play both and compare.';
+  const wa = ctx.createBuffer(1, Math.max(1, data.l.length), ctx.sampleRate);
+  wa.getChannelData(0).set(data.l);
+  const info = { when: 'mic test', appRate: ctx.sampleRate, micRate: st.sampleRate || null, echoCancellation: st.echoCancellation,
+    webAudioDropouts: countDropouts(data.l) + data.gaps, method: n ? `iPhone recorder works (${n.mime || 'audio'})` : 'iPhone recorder not available, Web Audio only', confidence: null };
+  result.replaceChildren(
+    takeReport(info),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', disabled: !n, onclick: () => playOnce(n && n.buf) }, '▶ iPhone recorder'),
+      h('button', { class: 'btn', onclick: () => playOnce(wa) }, '▶ Web Audio')),
+    h('p', { class: 'hint' }, 'Takes now use the iPhone recorder copy. If it is clean here but choppy with the beat, the phone is ducking your voice under the speaker: wear headphones.'));
+}
+
 function openSettings() {
   const auto = Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0) + 0.01) * 1000);
   const cur = settings.latencyMs ?? auto;
-  openSheet('Recording timing',
+  openSheet('Recording',
+    takeReport(ui.lastTake),
+    h('div', { class: 'row', style: 'margin-bottom:14px' },
+      h('button', { class: 'btn', onclick: () => micTest(false) }, 'Test mic'),
+      h('button', { class: 'btn', onclick: () => micTest(true) }, 'Test with beat')),
+    h('div', { class: 'card-title', style: 'margin-bottom:6px' }, 'Timing'),
     h('p', { class: 'hint', style: 'margin-bottom:10px' }, 'If your vocals land behind the beat, raise this. If they land early, lower it. Bluetooth headphones need much more (200 ms or so); wired headphones are best.'),
     slider('Shift', cur, 0, 400, 1, (v) => { settings.latencyMs = v; saveSettings(); }, (v) => `${v} ms`),
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { settings.latencyMs = null; saveSettings(); openSettings(); } }, `Reset to automatic (${auto} ms)`),
@@ -1116,9 +1238,15 @@ async function boot() {
   requestAnimationFrame(frame);
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   if ('serviceWorker' in navigator && !local && location.protocol === 'https:') {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode is optional */ });
+    // When a new version takes over, reload once so it's the one running.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded && !rec) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => { /* offline mode is optional */ });
   }
 }
 
 boot();
-window.__estudio = { engine, live, get project() { return project; } };
+window.__estudio = { engine, live, recorder, bestTake, startNative, stopNative, decode, get project() { return project; } };
