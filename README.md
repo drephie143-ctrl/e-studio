@@ -9,12 +9,15 @@ plain HTML, CSS and JavaScript modules.
 | Tab | What's there |
 |---|---|
 | **Studio** | Multitrack recorder: record from the mic or the Keys with a count-in, then mute, solo, set volume and pan. Import audio (WAV, MP3, M4A), nudge takes, export the mix as WAV |
+| **Song** | Song generator: pick a style (Trap, Drill, Boom bap, R&B, Screw, Pop), a mood (Dark, Sad, Chill, Happy), a key and a length (8-bar loop, ~40-bar song, ~68-bar full song). It writes the chords, the 808 or bass line, a hook melody and the drum groove, laid out as intro, verses, hooks and outro. Each section shows its chords and has a lyric pad with a writing prompt; tap a section to play from it. Roll the melody, chords or drums again on their own. Parts land as tracks in Studio (badge SONG), the groove lands on the Beat tab, and Auto-Tune is set to the song's key |
 | **Beat** | 16-step drum machine (kick, 808, snare, clap, hats, rim), all synthesized. Presets for trap, boom bap and screw, plus swing and 808 tuning |
 | **Keys** | Two-octave touch keyboard with Keys, Lead, Square, Bass and Pad sounds. Records straight to a track |
 | **Auto-Tune** | Pitch correction snapped to a key and scale. Speed 0 gives the hard robotic sound; slower speeds sound natural. Detects the key from the vocal and draws your pitch against the tuned pitch |
 | **Screw** | Chopped & Screwed: slows the mix or any track down so the pitch drops, then adds beat-synced chops (repeat, stutter, backspin, mix), a dark echo and a muffle. Live pads (CHOP, DOUBLE, SPIN, BRAKE) chop it as it plays, and **Record my chops** saves the run as a track |
 
-How it works: Auto-Tune finds the pitch with YIN and re-pitches with TD-PSOLA (`js/dsp/autotune.js`).
+How it works: the song generator (`js/music/songgen.js`) is seeded, so each roll is repeatable;
+its parts are synthesized in plain JavaScript (`js/audio/render.js`), a 2–3 minute song in a couple
+of seconds. Auto-Tune finds the pitch with YIN and re-pitches with TD-PSOLA (`js/dsp/autotune.js`).
 The screw is a tape-style resample plus bar-grid chops (`js/dsp/screw.js`). Both run in a worker.
 
 ## Getting it on an iPhone

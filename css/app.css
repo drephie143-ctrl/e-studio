@@ -159,6 +159,19 @@ canvas.pitch { width: 100%; height: 190px; background: var(--bg); border-radius:
 .pad:active small, .pad.hit small { color: #ffe3d3; }
 .screw-info { font-size: 13px; color: var(--accent); font-weight: 600; }
 
+/* song */
+.song-title { font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
+.sec { gap: 8px; transition: border-color .15s; }
+.sec.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-align: left; }
+.sec-name { font-weight: 700; font-size: 16px; }
+.sec.cur .sec-name { color: var(--accent); }
+.chords { display: flex; gap: 6px; flex-wrap: wrap; }
+.chord { font-weight: 700; font-size: 13px; padding: 4px 9px; border-radius: 7px; background: rgba(77, 163, 255, .14); color: var(--blue); font-variant-numeric: tabular-nums; }
+textarea { font: inherit; font-size: 16px; line-height: 1.45; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; width: 100%; resize: vertical;
+  -webkit-user-select: text; user-select: text; }
+textarea::placeholder { color: #5d6877; }
+
 /* sheet + toast */
 .sheet-wrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); }

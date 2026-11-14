@@ -7,12 +7,14 @@ import { VOICES, playDrum, emptyPattern, PRESETS as BEATS } from './audio/drums.
 import { NOTE_NAMES, SCALES, correctionCurve, detectKey, mixToMono, hzToMidi } from './dsp/autotune.js';
 import { runDsp } from './dsp/client.js';
 import { encodeWav } from './dsp/wav.js';
+import { STYLES, MOODS, LENGTHS, generateSong, newSeed, promptFor } from './music/songgen.js';
+import { renderPart } from './audio/render.js';
 import * as store from './store.js';
 import { ICON } from './icons.js';
 
 // ---------------------------------------------------------------------------
 // setup
-export const APP_VERSION = 2;
+export const APP_VERSION = 3;
 const $ = (q, el = document) => el.querySelector(q);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
@@ -46,8 +48,14 @@ function newProjectData(name = 'Untitled') {
     key: 0, scale: 'minor',
     drums: { pattern: emptyPattern(), vol: 0.8, mute: false, solo: false, swing: 0, tune: 0 },
     screw: { rate: 0.75, style: 'repeat', every: 2, beats: 1, echo: 0.3, muffle: 0.25, bpm: null },
+    song: defaultSong(),
     tracks: [], created: Date.now(), updated: Date.now(),
   };
+}
+
+function defaultSong() {
+  return { style: 'trap', mood: 'sad', key: 'any', length: 'song', parts: { drums: true, bass: true, chords: true, melody: true },
+    seeds: null, result: null, lyrics: {} };
 }
 
 function serialize(p) {
@@ -72,6 +80,7 @@ async function loadProject(id) {
   const base = newProjectData();
   p.drums = Object.assign(base.drums, p.drums);
   p.screw = Object.assign(base.screw, p.screw);
+  p.song = Object.assign(base.song, p.song);
   for (const t of p.tracks) {
     t.raw = await store.getAudio(`${p.id}/${t.id}/raw`, ctx);
     t.tuned = t.hasTuned ? await store.getAudio(`${p.id}/${t.id}/tuned`, ctx) : null;
@@ -276,7 +285,7 @@ function render() {
   renderTransport();
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + tab));
   document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === tab ? 'page' : 'false'));
-  const builders = { studio: studioTab, beat: beatTab, keys: keysTab, tune: tuneTab, screw: screwTab };
+  const builders = { studio: studioTab, song: songTab, beat: beatTab, keys: keysTab, tune: tuneTab, screw: screwTab };
   drawQueue = [];
   $('#tab-' + tab).replaceChildren(builders[tab]());
   requestAnimationFrame(flushDraws);
@@ -360,6 +369,7 @@ function trackCard(t, L) {
     h('div', { class: 'track-head' },
       h('button', { class: 'tname', onclick: () => trackMenu(t) }, t.name),
       tuned ? h('span', { class: 'badge' }, 'AUTO-TUNE') : null,
+      t.gen ? h('span', { class: 'badge blue' }, 'SONG') : null,
       h('span', { class: 'grow' }),
       h('button', { class: 'ms mute' + (t.mute ? ' on' : ''), 'aria-label': 'Mute ' + t.name, onclick: () => { t.mute = !t.mute; engine.updateMix(); changed(); } }, 'M'),
       h('button', { class: 'ms solo' + (t.solo ? ' on' : ''), 'aria-label': 'Solo ' + t.name, onclick: () => { t.solo = !t.solo; engine.updateMix(); changed(); } }, 'S'),
@@ -540,6 +550,152 @@ async function stopRecording() {
   engine.pos = r.from;
   toast('Take saved');
   render();
+}
+
+// --- Song generator -----------------------------------------------------------
+const PART_NAMES = { chords: 'Chords', bass: 'Bass', melody: 'Melody' };
+const PART_MIX = { chords: { vol: 0.6, pan: -0.15 }, bass: { vol: 0.55, pan: 0 }, melody: { vol: 0.65, pan: 0.15 } };
+
+function songTab() {
+  const s = project.song;
+  const r = s.result;
+  const hasVocals = project.tracks.some((t) => !t.gen);
+  const pick = (k, v) => { s[k] = v; changed(); };
+
+  const setup = h('div', { class: 'card' },
+    h('h2', {}, 'Song generator'),
+    h('p', { class: 'hint' }, 'Pick a style and a mood. It writes the chords, the 808 or bass, a hook melody and the drums, laid out as a song with verses and hooks you can write and record over.'),
+    h('div', { class: 'field' }, 'Style',
+      h('div', { class: 'chips' }, Object.entries(STYLES).map(([k, v]) => chip(v.name, s.style === k, () => pick('style', k))))),
+    h('div', { class: 'field' }, 'Mood', seg(Object.entries(MOODS).map(([k, v]) => [k, v.name]), s.mood, (v) => pick('mood', v))),
+    h('div', { class: 'row2' },
+      field('Key', select([['any', 'Surprise me'], ...NOTE_NAMES.map((n, i) => [String(i), n])], String(s.key), (v) => pick('key', v), 'Key')),
+      h('div', { class: 'field' }, 'Length', seg(Object.entries(LENGTHS).map(([k, v]) => [k, v.name]), s.length, (v) => pick('length', v)))),
+    h('div', { class: 'field' }, 'Parts',
+      h('div', { class: 'chips' },
+        chip('Drums', s.parts.drums, (v) => { s.parts.drums = v; changed(); }),
+        chip(STYLES[s.style].sounds.bass === '808' ? '808' : 'Bass', s.parts.bass, (v) => { s.parts.bass = v; changed(); }),
+        chip('Chords', s.parts.chords, (v) => { s.parts.chords = v; changed(); }),
+        chip('Melody', s.parts.melody, (v) => { s.parts.melody = v; changed(); }))),
+    !s.parts.drums ? h('p', { class: 'hint' }, 'Drums off: your beat on the Beat tab stays as it is.') : null,
+    hasVocals ? h('p', { class: 'hint' }, `Your recorded takes stay put, and the song keeps the ${project.bpm} BPM tempo so they stay in time.`) : null,
+    h('button', { class: 'btn primary big', disabled: ui.busy, onclick: () => makeSong('all') }, r ? 'Generate a new song' : 'Generate song'),
+    h('div', { class: 'status', id: 'songStatus' }));
+
+  const out = h('div', { class: 'stack' }, setup);
+  if (!r) return out;
+
+  out.append(h('div', { class: 'card' },
+    h('div', { class: 'row' }, h('div', { class: 'card-title grow' }, 'Your song'), h('span', { class: 'hint' }, r.styleName + ' · ' + r.moodName)),
+    h('div', { class: 'song-title' }, r.title),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', onclick: () => { stopPreview(); live.pause(); ctx.resume(); engine.play(0); renderTransport(); } }, '▶ Play from the top'),
+      h('button', { class: 'btn', onclick: () => { tab = 'studio'; render(); } }, 'Open in Studio')),
+    h('div', { class: 'field' }, 'Not feeling a part? Roll just that one',
+      h('div', { class: 'chips' },
+        h('button', { class: 'chip', disabled: ui.busy, onclick: () => makeSong('melody') }, '🎲 Melody'),
+        h('button', { class: 'chip', disabled: ui.busy, onclick: () => makeSong('chords') }, '🎲 Chords'),
+        h('button', { class: 'chip', disabled: ui.busy, onclick: () => makeSong('drums') }, '🎲 Drums')))));
+
+  const secs = h('div', { class: 'stack' });
+  r.sections.forEach((sec, i) => {
+    const ta = h('textarea', { rows: Math.min(8, Math.max(3, sec.bars / 2)), placeholder: promptFor(sec.kind, (s.seeds.song || 0) + i), value: s.lyrics[sec.label] || '',
+      'aria-label': `Lyrics for ${sec.label}`, oninput: (e) => { s.lyrics[sec.label] = e.target.value; changedQuiet(); } });
+    secs.append(h('div', { class: 'card sec', 'data-start': sec.start, 'data-end': sec.start + sec.bars },
+      h('button', { class: 'sec-head', onclick: () => { stopPreview(); live.pause(); ctx.resume(); engine.play(sec.start * engine.barSec); renderTransport(); }, 'aria-label': `Play from ${sec.label}` },
+        h('span', { class: 'sec-name' }, sec.label),
+        h('span', { class: 'hint' }, `bars ${sec.start + 1}–${sec.start + sec.bars} · ▶`)),
+      h('div', { class: 'chords' }, sec.chords.map((c) => h('span', { class: 'chord' }, c))),
+      ta));
+  });
+  out.append(secs);
+  out.append(h('div', { class: 'row' },
+    h('button', { class: 'btn', onclick: copyLyrics }, 'Copy lyrics'),
+    h('button', { class: 'btn', onclick: () => { tab = 'tune'; render(); } }, 'Auto-Tune is set to ' + NOTE_NAMES[r.key])));
+  return out;
+}
+
+async function copyLyrics() {
+  const s = project.song;
+  const text = s.result.sections.map((sec) => `[${sec.label}]  ${sec.chords.join(' – ')}\n${(s.lyrics[sec.label] || '').trim()}`).join('\n\n');
+  try { await navigator.clipboard.writeText(`${project.name}\n${s.result.title}\n\n${text}\n`); toast('Lyrics copied'); }
+  catch { toast("Couldn't copy here"); }
+}
+
+// which: 'all' for a new song, or 'melody' / 'chords' / 'drums' to roll one part again.
+async function makeSong(which) {
+  const s = project.song;
+  const p = project;
+  if (ui.busy) return;
+  ui.busy = true;
+  engine.stop();
+  stopPreview();
+  live.pause();
+  render();
+  try {
+    const old = s.result;
+    const hasVocals = p.tracks.some((t) => !t.gen);
+    const fresh = which === 'all' || !old || !s.seeds;
+    if (fresh) s.seeds = { song: newSeed(), chords: newSeed(), melody: newSeed(), drums: newSeed() };
+    else s.seeds = { ...s.seeds, [which]: newSeed() };
+    // Partial rolls keep the key and tempo; a tempo change since then re-renders every part.
+    const tempoMoved = !fresh && old.bpm !== p.bpm;
+    const opts = {
+      style: fresh ? s.style : old.style, mood: fresh ? s.mood : old.mood, length: fresh ? s.length : old.length,
+      key: fresh ? s.key : old.key, seeds: s.seeds, parts: s.parts,
+      bpm: hasVocals || !fresh ? p.bpm : null,
+    };
+    const g = generateSong(opts);
+
+    setStatus('songStatus', 'Writing the song…', true);
+    p.bpm = g.bpm;
+    p.bars = g.totalBars;
+    p.key = g.key;
+    p.scale = g.scale;
+    for (const t of p.tracks) if (!t.tuned) t.tune = { ...t.tune, key: g.key, scale: g.scale };
+    if (s.parts.drums && (fresh || which === 'drums')) {
+      p.drums.pattern = g.groove;
+      p.drums.swing = g.swing;
+    }
+    engine.setProject(p);
+
+    const parts = fresh || tempoMoved ? ['chords', 'bass', 'melody']
+      : which === 'melody' ? ['melody']
+        : which === 'drums' ? ['bass']
+          : ['chords', 'bass', 'melody'];
+    const label = { chords: 'chords', bass: g.sounds.bass === '808' ? '808' : 'bass line', melody: 'melody' };
+    for (const part of parts) {
+      const prev = p.tracks.find((t) => t.gen === part);
+      const mix = prev ? { vol: prev.vol, pan: prev.pan, mute: prev.mute, solo: prev.solo } : { ...PART_MIX[part] };
+      if (prev) {
+        p.tracks = p.tracks.filter((t) => t !== prev);
+        engine.removeTrack(prev.id);
+        await store.deleteAudio(`${p.id}/${prev.id}/`);
+      }
+      const notes = g.parts[part];
+      if (!s.parts[part] || !notes.length) continue;
+      setStatus('songStatus', `Playing the ${label[part]}…`, true);
+      const buf = await renderPart(notes, { ctx, sound: g.sounds[part], bpm: g.bpm, bars: g.totalBars, swing: g.swing });
+      const name = part === 'bass' && g.sounds.bass === '808' ? '808' : PART_NAMES[part];
+      await addTrack(name, buf, 0, { gen: part, ...mix, tune: { key: g.key, scale: g.scale, speed: 0, amount: 1 } });
+    }
+    // Generated parts sit above the takes in the Studio list.
+    p.tracks.sort((a, b) => (b.gen ? 1 : 0) - (a.gen ? 1 : 0));
+
+    s.result = {
+      style: opts.style, mood: opts.mood, length: opts.length, styleName: STYLES[opts.style].name, moodName: MOODS[opts.mood].name,
+      key: g.key, scale: g.scale, bpm: g.bpm, title: g.title, sections: g.sections.map(({ kind, label: l, bars, start, chords }) => ({ kind, label: l, bars, start, chords })),
+    };
+    if (fresh && !hasVocals && /^(Untitled|My first song)$/.test(p.name)) p.name = `${STYLES[opts.style].name} in ${NOTE_NAMES[g.key]}`;
+    ui.busy = false;
+    changed();
+    setStatus('songStatus', fresh ? 'Done. Press play, then write your lines below.' : `New ${which} is in.`);
+  } catch (e) {
+    console.error(e);
+    ui.busy = false;
+    render();
+    setStatus('songStatus', 'Something went wrong: ' + e.message);
+  }
 }
 
 // --- Beat ------------------------------------------------------------------
@@ -1214,6 +1370,13 @@ function frame() {
       document.querySelectorAll('.step.cur').forEach((el) => el.classList.remove('cur'));
       if (step >= 0) document.querySelectorAll(`.step[data-step="${step}"]`).forEach((el) => el.classList.add('cur'));
       lastStep = step;
+    }
+    if (tab === 'song') {
+      const curBar = engine.playing && !counting ? Math.floor(pp / bar) : -1;
+      if (curBar !== frame.songBar) {
+        frame.songBar = curBar;
+        document.querySelectorAll('.sec').forEach((el) => el.classList.toggle('cur', curBar >= +el.dataset.start && curBar < +el.dataset.end));
+      }
     }
     if (tab === 'screw' && live.duration > 0) {
       const lp = document.querySelector('.ph-live');

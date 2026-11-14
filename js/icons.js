@@ -14,5 +14,6 @@ export const ICON = {
   keys: s('<rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 4v16M15 4v16" stroke="currentColor" stroke-width="1.6"/><rect x="7.3" y="4" width="3.4" height="9" fill="currentColor"/><rect x="13.3" y="4" width="3.4" height="9" fill="currentColor"/>'),
   tune: s('<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M3 8h18" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 2.5"/>'),
   screw: s('<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1" opacity=".6"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/>'),
+  song: s('<path d="M9 18V6l11-2v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.6" fill="currentColor"/><circle cx="17.5" cy="16" r="2.6" fill="currentColor"/><path d="M3 4.5l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="currentColor" transform="translate(1 0)"/>'),
   mic: s('<rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'),
 };
